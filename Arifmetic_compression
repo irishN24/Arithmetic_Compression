@@ -1,0 +1,316 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <list>
+#include <unordered_map>
+#include <algorithm>
+#include <vector>
+#include <bitset>
+#include <cmath>
+
+using namespace std;
+
+class ArithmeticCoder {
+private:
+    static const unsigned int HIGH = 65535;
+    static const unsigned int HALF = 32768;
+    static const unsigned int QUARTER = 16384;
+    static const unsigned int THIRD_QUARTER = 49152;
+    char BREAK_SYMBOL = '\0';
+    unordered_map<char, unsigned int> m_frequency;
+    unordered_map<char, pair<unsigned int, unsigned int>> m_ranges;
+    unsigned int m_total;
+    void buildRanges() {
+        unsigned int cumulative = 0;
+        for (const auto& pair : m_frequency) {
+            m_ranges[pair.first] = make_pair(cumulative, cumulative + pair.second);
+            cumulative += pair.second;
+        }
+        m_total = cumulative;
+    }
+public:
+    ArithmeticCoder() : m_total(0) {}
+    void build(const string& text) {
+        // Подсчет частот
+        for (char ch : text) {
+            m_frequency[ch]++;
+        }
+        buildRanges();
+    }
+    void buildFromFreqM(const unordered_map<char, int>& freqM) {
+        for (const auto& pair : freqM) {
+            m_frequency[pair.first] = pair.second;
+        }
+        buildRanges();
+    }
+    string encode(const string& text) const {
+        if (text.empty()) return "";
+
+        unsigned int low = 0;
+        unsigned int high = HIGH;
+        string encodedBits;
+        int bits_to_follow = 0;
+
+        for (char ch : text) {
+            if (m_ranges.find(ch) == m_ranges.end()) {
+                cerr << "Symbol not found in alphabet: " << ch << endl;
+                continue;
+            }
+
+            auto range = m_ranges.at(ch);
+            unsigned long long range_width = (unsigned long long)(high - low) + 1;
+
+            high = low + (range_width * range.second) / m_total - 1;
+            low = low + (range_width * range.first) / m_total;
+
+            while (true) {
+                if (high < HALF) {
+                    encodedBits += '0';
+                    for (int i = 0; i < bits_to_follow; i++) {
+                        encodedBits += '1';
+                    }
+                    bits_to_follow = 0;
+                }
+                else if (low >= HALF) {
+                    encodedBits += '1';
+                    for (int i = 0; i < bits_to_follow; i++) {
+                        encodedBits += '0';
+                    }
+                    bits_to_follow = 0;
+                    low -= HALF;
+                    high -= HALF;
+                }
+                else if (low >= QUARTER && high < THIRD_QUARTER) {
+                    bits_to_follow++;
+                    low -= QUARTER;
+                    high -= QUARTER;
+                }
+                else {
+                    break;
+                }
+                low <<= 1;
+                high = (high << 1) | 1;
+            }
+        }
+        bits_to_follow++;
+        if (low < QUARTER) {
+            encodedBits += '0';
+            for (int i = 0; i < bits_to_follow; i++) {
+                encodedBits += '1';
+            }
+        }
+        else {
+            encodedBits += '1';
+            for (int i = 0; i < bits_to_follow; i++) {
+                encodedBits += '0';
+            }
+        }
+        return encodedBits;
+    }
+    string decode(const string& encodedBits) const {
+        if (encodedBits.empty()) return "";
+        unsigned int low = 0;
+        unsigned int high = HIGH;
+        unsigned int value = 0;
+        string decodedText;
+        // Чтение первых 16 бит
+        for (int i = 0; i < 16 && i < encodedBits.size(); i++) {
+            value = (value << 1) | (encodedBits[i] == '1' ? 1 : 0);
+        }
+        int bit_index = 16;
+        bool end_of_stream = false;
+        while (!end_of_stream && decodedText.size() < m_total) {
+            unsigned long long range_width = (unsigned long long)(high - low) + 1;
+            unsigned int scale = ((unsigned long long)(value - low) * m_total) / range_width;
+            // Находим символ по масштабированному значению
+            char found_char = BREAK_SYMBOL;
+            for (const auto& pair : m_ranges) {
+                if (scale >= pair.second.first && scale < pair.second.second) {
+                    found_char = pair.first;
+                    break;
+                }
+            }
+            if (found_char == BREAK_SYMBOL) {
+                break;
+            }
+            decodedText += found_char;
+            // Обновляем диапазон
+            auto range = m_ranges.at(found_char);
+            high = low + (range_width * range.second) / m_total - 1;
+            low = low + (range_width * range.first) / m_total;
+            // Масштабирование
+            while (true) {
+                if (high < HALF) {
+                    // Ничего не делаем
+                }
+                else if (low >= HALF) {
+                    low -= HALF;
+                    high -= HALF;
+                    value -= HALF;
+                }
+                else if (low >= QUARTER && high < THIRD_QUARTER) {
+                    low -= QUARTER;
+                    high -= QUARTER;
+                    value -= QUARTER;
+                }
+                else {
+                    break;
+                }
+                low <<= 1;
+                high = (high << 1) | 1;
+                if (bit_index < encodedBits.size()) {
+                    value = (value << 1) | (encodedBits[bit_index] == '1' ? 1 : 0);
+                    bit_index++;
+                }
+                else {
+                    value <<= 1;
+                }
+            }
+            if (found_char == BREAK_SYMBOL) {
+                end_of_stream = true;
+            }
+        }
+        return decodedText;
+    }
+};
+//перевод бит в байты(для кодирования и сжатия)
+vector<uint8_t> Bits_Bytes(const string& bit) {
+    vector<uint8_t> bytes;
+    uint8_t byte = 0;
+    int counter = 0;
+    for (char bit : bit) {
+        byte = (byte << 1) | (bit == '1' ? 1 : 0);
+        counter++;
+        if (counter == 8) {
+            bytes.push_back(byte);
+            byte = 0;
+            counter = 0;
+        }
+    }
+    if (counter > 0) {
+        byte <<= (8 - counter);
+        bytes.push_back(byte);
+    }
+    return bytes;
+}
+//перевод байтов в биты(для декодирования)
+string Bytes_Bits(const vector<uint8_t>& bytes) {
+    string bits;
+    for (uint8_t byte : bytes) {
+        for (int i = 7; i >= 0; i--) {
+            bits += (byte & (1 << i)) ? '1' : '0';
+        }
+    }
+    return bits;
+}
+//Сохранение массива частот в закодированный файл
+void Encoded_Data(const string& f_name, const unordered_map<char, int>& freqM, const string& encodeTxt) {
+    ofstream file(f_name, ios::binary);
+    if (!file.is_open()) {
+        cerr << "Error opening the file for writing: : " << f_name << endl;
+        return;
+    }
+
+    size_t numSymbols = freqM.size();//количество разных сиволов
+    file.write(reinterpret_cast<const char*>(&numSymbols), sizeof(numSymbols));//запись в файл
+    //Записываем пары (символ, частота)
+    for (const auto& pair : freqM) {
+        file.write(reinterpret_cast<const char*>(&pair.first), sizeof(pair.first));
+        file.write(reinterpret_cast<const char*>(&pair.second), sizeof(pair.second));
+    }
+    //преобразование в байты
+    vector<uint8_t> bytes = Bits_Bytes(encodeTxt);
+    size_t Length = encodeTxt.size(); //длина данных, сколько бит нужно декодировать.
+    file.write(reinterpret_cast<const char*>(&Length), sizeof(Length));
+    file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    file.close();
+}
+//Чтение частот и закодированного текста
+pair<unordered_map<char, int>, string> ReadEncodedData(const string& f_name) {
+    ifstream file(f_name, ios::binary);
+    if (!file.is_open()) {
+        cerr << "Error open file: " << f_name << endl;
+        return {};
+    }
+    size_t numSymbols; //количество уникальных символов
+    file.read(reinterpret_cast<char*>(&numSymbols), sizeof(numSymbols));
+    // Чтение пар символов и частот
+    unordered_map<char, int> freqM;
+    for (size_t i = 0; i < numSymbols; ++i) {
+        char symbol; //символ
+        int frequency; //его частота
+        file.read(reinterpret_cast<char*>(&symbol), sizeof(symbol));
+        file.read(reinterpret_cast<char*>(&frequency), sizeof(frequency));
+        freqM[symbol] = frequency;
+    }
+    // Находим длину данных в битах
+    size_t Length;
+    file.read(reinterpret_cast<char*>(&Length), sizeof(Length));
+    // Чтение
+    vector<uint8_t> bytes((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
+    file.close();
+    string encodedText = Bytes_Bits(bytes);
+    encodedText.resize(Length);
+    return { freqM, encodedText };
+}
+//чтение из файла
+string readFromFile(const string& filename) {
+    ifstream file(filename);
+    if (!file.is_open()) {
+        cerr << "Error open file: " << filename << endl;
+        return "";
+    }
+    string text((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
+    file.close();
+    return text;
+}
+//запись в файл
+void writeToFile(const string& F_name, const string& text) {
+    ofstream file(F_name);
+    if (!file.is_open()) {
+        cerr << "Error opening the file for writing: " << F_name << "\n";
+        return;
+    }
+    file << text;
+    file.close();
+}
+
+int main() {
+    ArithmeticCoder arithmeticCoder;
+
+    //чтение текста из файла
+    string inputFile = "original.txt";
+    string text = readFromFile(inputFile);
+    if (text.empty()) {
+        cerr << "The file is empty or the file could not be read." << "\n";
+        return 1;
+    }
+    text += '\0';
+    arithmeticCoder.build(text);
+
+    //кодирование
+    string encodedTxT = arithmeticCoder.encode(text);
+    //Заполняем массив частот
+    unordered_map<char, int> freqM;
+    for (char ch : text) {
+        if (ch != '\0') {
+            freqM[ch]++;
+        }
+    }
+    string encodeName = "encode.bin";
+    Encoded_Data(encodeName, freqM, encodedTxT);
+    cout << "The encoded text is written to a bynary file: " << encodeName << "\n";
+
+    auto [Read_FreqM, Read_EncodedTxT] = ReadEncodedData(encodeName);
+    ArithmeticCoder arithmeticCoder2;
+    arithmeticCoder2.buildFromFreqM(Read_FreqM);
+    string decodeTxT = arithmeticCoder2.decode(Read_EncodedTxT);
+    if (!decodeTxT.empty() && decodeTxT.back() == '\0') {
+        decodeTxT.pop_back();
+    }
+    string decodeName = "decode.txt";
+    writeToFile(decodeName, decodeTxT);
+    cout << "The decoded text is written to a file: " << decodeName << "\n";
+
+    return 0;
+}
